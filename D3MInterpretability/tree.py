@@ -6,7 +6,7 @@ import typing
 
 import shap
 
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 
 class Tree():
     '''
@@ -83,8 +83,10 @@ class Tree():
         '''
         ##need the prediction value with it here, then you can give the output for the actual prediction?
         shap_values = self.explainer.shap_values(self.X.iloc[samples])
-        
-        return shap_values
+        if self.task_type == 'classification':
+            return shap_values[1]
+        else: 
+            return shap_values
     
     
     def produce_global(self):
@@ -92,7 +94,7 @@ class Tree():
             Returns global explanation (shapley values)
         """ 
 
-        if self.model_type == 'Random_Forest':
+        if (self.model_type == 'Random_Forest') & (self.X.shape[0] > 1500):
             
             df = self.X.copy()
             df['rf_preds'] = self.model.predict(self.X).astype(int)
@@ -104,24 +106,28 @@ class Tree():
         else:            
             shap_values = self.explainer.shap_values(X_test)
 
-        return shap_values
+        if self.task_type == 'classification':
+            return shap_values[1]
+        else: 
+            return shap_values
 
 if __name__ == '__main__':
 
-    train_path = 'file:///home/alexmably/datasets/seed_datasets_current/SEMI_1217_click_prediction_small/TRAIN/dataset_TRAIN/tables/learningData.csv'
-    test_path = 'file:///home/alexmably/datasets/seed_datasets_current/SEMI_1217_click_prediction_small/SCORE/dataset_SCORE/tables/learningData.csv'
+    train_path = 'file:///home/alexmably/datasets/seed_datasets_current/196_autoMpg/TRAIN/dataset_TRAIN/tables/learningData.csv'
+    test_path = 'file:///home/alexmably/datasets/seed_datasets_current/196_autoMpg/SCORE/dataset_TEST/tables/learningData.csv'
 
     train = pd.read_csv(train_path)
     test = pd.read_csv(test_path)
     train.dropna(inplace=True)
-    X_train = train.drop(columns = ['d3mIndex','click'])
-    y_train = train['click']
+    X_train = train.drop(columns = ['d3mIndex','class'])
+    y_train = train['class']
 
-    X_test = test.drop(columns = ['d3mIndex','click'])
-    y_test = test['click']
+    X_test = test.drop(columns = ['d3mIndex','class'])
+    y_test = test['class']
 
-    rf = RandomForestClassifier(n_estimators=50, max_depth=5)
+    rf = RandomForestRegressor(n_estimators=50, max_depth=5)
     rf.fit(X_train, y_train)
 
     exp = Tree(model = rf, X = X_test)
+   # print(exp.produce_global())
     print(exp.produce_sample(samples = [20, 21]))

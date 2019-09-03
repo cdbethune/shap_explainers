@@ -75,24 +75,7 @@ class Tree():
                     dfs.append(df[df['pred_target']==i])
                 else:
                     dfs.append(df[df['pred_target']==i].sample(proportion))
-                    
-            #try:
-             #   sub_sample_df = pd.concat(dfs)
-            #except(ValueError):
-             #   sub_sample_df = pd.DataFrame(columns = self.X.columns)
-        
-            # deal with splitting classes that have more than their proportional representation    
-           # if len(full_classes) > 0:
-                    #reset df
-            #    dfs = [sub_sample_df]
-                    
-             #   remaining = sample_length - sub_sample_df.shape[0]
-              #  remaining_prop = round(remaining/len(full_classes))
 
-                        
-               # for i in full_classes:
-                #    dfs.append(df[df['pred_target']==i].sample(remaining_prop))
-                   
             sub_sample_df = pd.concat(dfs)
             
             return sub_sample_df.drop(columns = ['pred_target'])
@@ -129,8 +112,14 @@ class Tree():
         """
             Returns global explanation (shapley values)
         """ 
-
-        if (self.model_type == 'Random_Forest'):
+        
+        # handle large random forest regressor
+        if (self.task_type == 'regression') & (self.model_type == 'Random_Forest') & (self.X.shape[0] > 1500):
+            sub_sample = self._get_data_sample(sample_length = 1500)
+            shap_values = self.explainer.shap_values(sub_sample)
+                    
+        # handle random forest classifier
+        if (self.task_type == 'classification') & (self.model_type == 'Random_Forest'):
             if self.X.shape[0] > 1500:
             
                 sub_sample = self._get_data_sample(sample_length = 1500)
@@ -138,16 +127,12 @@ class Tree():
                     shap_values = self.explainer.shap_vales(sub_sample)
                 else:
                     shap_values = []
-                    for row in sub_sample:
-                        pp = list(self.model.predict_proba(row))
+                    for index, row in sub_sample.iterrows():
+                        pp = list(self.model.predict_proba([row]))
                         pred_value = pp.index(max(pp))
                         shap_values.append(self.explainer.shap_values(row)[pred_value])
-            else:
-                shap_values = []
-                for row in self.X:
-                    pp = list(self.model.predict_proba(row))
-                    pred_value = pp.index(max(pp))
-                    shap_values.append(self.explainer.shap_values(row)[pred_value])
+
+        # handle small random forest regressor and other tree models
         else:            
             shap_values = self.explainer.shap_values(self.X)
 
@@ -156,9 +141,9 @@ class Tree():
 
 if __name__ == '__main__':
 
-    train_path = 'file:///home/alexmably/datasets/seed_datasets_current/196_autoMpg/TRAIN/dataset_TRAIN/tables/learningData.csv'
-    test_path = 'file:///home/alexmably/datasets/seed_datasets_current/196_autoMpg/SCORE/dataset_TEST/tables/learningData.csv'
-    target = 'class'
+    train_path = 'file:///home/alexmably/datasets/seed_datasets_current/SEMI_1217_click_prediction_small/TRAIN/dataset_TRAIN/tables/learningData.csv'
+    test_path = 'file:///home/alexmably/datasets/seed_datasets_current/SEMI_1217_click_prediction_small/SCORE/dataset_SCORE/tables/learningData.csv'
+    target = 'click'
     train = pd.read_csv(train_path)
     test = pd.read_csv(test_path)
     train.dropna(inplace=True)
@@ -171,8 +156,8 @@ if __name__ == '__main__':
     y_train = train[target]
     X_test = test.drop(columns = ['d3mIndex',target])
 
-    #rf = RandomForestClassifier(n_estimators=50, max_depth=5)
-    rf = RandomForestRegressor(n_estimators=50, max_depth=5)
+    rf = RandomForestClassifier(n_estimators=50, max_depth=5)
+    #rf = RandomForestRegressor(n_estimators=50, max_depth=5)
     rf.fit(X_train, y_train)
  
 
@@ -185,7 +170,7 @@ if __name__ == '__main__':
     #(params = param, dtrain = xgtrain)
     #xgb.fit(X_train,y_train)
 
-    exp = Tree(model = rf, X = X_test, model_type='Random_Forest', task_type = 'regression')
+    exp = Tree(model = rf, X = X_test, model_type='Random_Forest', task_type = 'classification')
     print(exp.produce_global())
     #print(X_test.shape[0])
     print(exp.produce_sample(samples = [10, 44]))

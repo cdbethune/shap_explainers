@@ -5,6 +5,7 @@ import pandas as pd
 import typing
 
 import shap
+import xgboost
 
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 
@@ -43,60 +44,81 @@ class Tree():
         self.task_type = task_type 
 
         self.explainer = shap.TreeExplainer(self.model)
-    
+
+        return None    
     
 
-    def _get_data_sample(df, target, sample_length):
+    def _get_data_sample(self, sample_length):
+
         '''
-            Sub-samples the given dataframe to provide a smaller, balanced dataframe to make global explainer
+            Sub-samples the dataframe to provide a smaller, balanced dataframe to make global explainer
         '''
-        n_classes = df[target].unique()
-        proportion = round(sample_length/len(n_classes))
         
-        dfs = []
-        full_classes = []
+        df = self.X.copy()
+        df['pred_target'] = self.model.predict(self.X).astype(int)
+
+        n_classes = df['pred_target'].unique()
+
+        #deal with cases in which the predictions are all one class
+        if len(n_classes) ==1:
+            return df.sample(1000).drop(columns = ['pred_target'])
         
-        for i in n_classes:
-            if df[df[target]==i].shape[0] <= proportion:
-                dfs.append(df[df[target]==i])
-            else:
-                full_classes.append(i)
-        df0 = pd.concat(dfs)
-        
-        #reset dfs
-        dfs = [df0]
-        
-        remaining = sample_length - df0.shape[0]
-        remaining_prop = round(remaining/len(full_classes))
+        else:
+            proportion = round(sample_length/len(n_classes))
             
-        for i in full_classes:
-            dfs.append(df[df[target]==i].sample(remaining_prop))
+            dfs = []
+            full_classes = []
+            
+            for i in n_classes:
+                #dealing with classes that have less than or equal to their proportional representation
+                if df[df['pred_target']==i].shape[0] <= proportion:
+                    dfs.append(df[df['pred_target']==i])
+                else:
+                    dfs.append(df[df['pred_target']==i].sample(proportion))
+                    
+            #try:
+             #   sub_sample_df = pd.concat(dfs)
+            #except(ValueError):
+             #   sub_sample_df = pd.DataFrame(columns = self.X.columns)
         
-        sub_sample_df = pd.concat(dfs)
+            # deal with splitting classes that have more than their proportional representation    
+           # if len(full_classes) > 0:
+                    #reset df
+            #    dfs = [sub_sample_df]
+                    
+             #   remaining = sample_length - sub_sample_df.shape[0]
+              #  remaining_prop = round(remaining/len(full_classes))
+
+                        
+               # for i in full_classes:
+                #    dfs.append(df[df['pred_target']==i].sample(remaining_prop))
+                   
+            sub_sample_df = pd.concat(dfs)
+            
+            return sub_sample_df.drop(columns = ['pred_target'])
         
-        return sub_sample_df
 
     
     def produce_sample(self, samples):
+
         '''
             Regression: Returns the shapley values for the given samples
-            Classification: Random Forest - returns a dictionary of shapley values to explain the prediction probabilities of each class
+            Classification: Random Forest - returns a list of the explanations for the prediction, in the order that the samples are given
         '''
-        ##need the prediction value with it here, then you can give the output for the actual prediction?
+        
         ##restrict features to most important
         
         shap_values = self.explainer.shap_values(self.X.iloc[samples])
-
+        
+       
         if (self.task_type == 'classification') & (self.model_type == 'Random_Forest'):
+
             values_list = []
-            for s in samples:
-                probability_dict = {}
-                count = 0
-                for idx, val in enumerate(self.model.classes_):
-                    probability_dict[val] = shap_values[idx]
-                    count +=1
-                values_list.append(probability_dict)
-            
+            for idx, val in enumerate(samples):
+                a = list(self.model.predict_proba(self.X.iloc[[val]]))
+                pred_value = a.index(max(a))
+                values_list.append(shap_values[pred_value][idx])
+                                   
             return values_list
         
         else: 
@@ -110,10 +132,7 @@ class Tree():
 
         if (self.model_type == 'Random_Forest') & (self.X.shape[0] > 1500):
             
-            df = self.X.copy()
-            df['rf_preds'] = self.model.predict(self.X).astype(int)
-
-            sub_sample = _get_data_sample(df=df, target='rf_preds', sample_length = 1000)
+            sub_sample = self._get_data_sample(sample_length = 1000)
             shap_values = self.explainer.shap_values(sub_sample)
         
 
@@ -127,21 +146,27 @@ class Tree():
 
 if __name__ == '__main__':
 
-    train_path = 'file:///home/alexmably/datasets/seed_datasets_current/SEMI_1217_click_prediction_small/TRAIN/dataset_TRAIN/tables/learningData.csv'
-    test_path = 'file:///home/alexmably/datasets/seed_datasets_current/SEMI_1217_click_prediction_small/SCORE/dataset_SCORE/tables/learningData.csv'
-
+    train_path = 'file:///home/alexmably/datasets/seed_datasets_current/26_radon_seed/TRAIN/dataset_TRAIN/tables/learningData.csv'
+    test_path = 'file:///home/alexmably/datasets/seed_datasets_current/26_radon_seed/SCORE/dataset_TEST/tables/learningData.csv'
+    target = 'log_radon'
     train = pd.read_csv(train_path)
     test = pd.read_csv(test_path)
     train.dropna(inplace=True)
-    X_train = train.drop(columns = ['d3mIndex','click'])
-    y_train = train['click']
+    
+    train = train.drop(columns = ['state','state2','basement','windoor','county'])
+    test = test.drop(columns = ['state','state2','basement','windoor','county'])
+    X_train = train.drop(columns = ['d3mIndex',target])
+    y_train = train[target]
 
-    X_test = test.drop(columns = ['d3mIndex','click'])
-    y_test = test['click']
+    X_test = test.drop(columns = ['d3mIndex',target])
+    y_test = test[target]
 
-    rf = RandomForestClassifier(n_estimators=50, max_depth=5)
+    #rf = RandomForestClassifier(n_estimators=50, max_depth=5)
+    rf = RandomForestRegressor(n_estimators=50, max_depth=5)
     rf.fit(X_train, y_train)
 
-    exp = Tree(model = rf, X = X_test, model_type = 'Random_Forest', task_type = 'classification')
-   # print(exp.produce_global())
-    print(exp.produce_sample(samples = [20, 21]))
+    exp = Tree(model = rf, X = X_test, model_type = 'Random_Forest', task_type = 'regression')
+    #print(exp.produce_global())
+    #print(X_test.shape[0])
+    print(exp.produce_sample(samples = [10, 44]))
+    #print(X_test.iloc[[10,44]])

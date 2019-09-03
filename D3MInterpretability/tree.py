@@ -130,43 +130,72 @@ class Tree():
             Returns global explanation (shapley values)
         """ 
 
-        if (self.model_type == 'Random_Forest') & (self.X.shape[0] > 1500):
+        if (self.model_type == 'Random_Forest'):
+            if self.X.shape[0] > 1500:
             
-            sub_sample = self._get_data_sample(sample_length = 1000)
-            shap_values = self.explainer.shap_values(sub_sample)
-        
-
+                sub_sample = self._get_data_sample(sample_length = 1500)
+                if self.task_type == 'regression':
+                    shap_values = self.explainer.shap_vales(sub_sample)
+                else:
+                    shap_values = []
+                    for row in sub_sample:
+                        pp = list(self.model.predict_proba(row))
+                        pred_value = pp.index(max(pp))
+                        shap_values.append(self.explainer.shap_values(row)[pred_value])
+            else:
+                shap_values = []
+                for row in self.X:
+                    pp = list(self.model.predict_proba(row))
+                    pred_value = pp.index(max(pp))
+                    shap_values.append(self.explainer.shap_values(row)[pred_value])
         else:            
-            shap_values = self.explainer.shap_values(X_test)
+            shap_values = self.explainer.shap_values(self.X)
 
-        if self.task_type == 'classification':
-            return shap_values[1]
-        else: 
-            return shap_values
+        
+        return shap_values
 
 if __name__ == '__main__':
 
-    train_path = 'file:///home/alexmably/datasets/seed_datasets_current/26_radon_seed/TRAIN/dataset_TRAIN/tables/learningData.csv'
-    test_path = 'file:///home/alexmably/datasets/seed_datasets_current/26_radon_seed/SCORE/dataset_TEST/tables/learningData.csv'
-    target = 'log_radon'
+    train_path = 'file:///home/alexmably/datasets/seed_datasets_current/196_autoMpg/TRAIN/dataset_TRAIN/tables/learningData.csv'
+    test_path = 'file:///home/alexmably/datasets/seed_datasets_current/196_autoMpg/SCORE/dataset_TEST/tables/learningData.csv'
+    target = 'class'
     train = pd.read_csv(train_path)
     test = pd.read_csv(test_path)
     train.dropna(inplace=True)
     
-    train = train.drop(columns = ['state','state2','basement','windoor','county'])
-    test = test.drop(columns = ['state','state2','basement','windoor','county'])
+    #train = train.drop(columns = ['state','state2','basement','windoor','county'])
+    #test = test.drop(columns = ['state','state2','basement','windoor','county'])
+    
+    ##RF 
     X_train = train.drop(columns = ['d3mIndex',target])
     y_train = train[target]
-
     X_test = test.drop(columns = ['d3mIndex',target])
-    y_test = test[target]
 
     #rf = RandomForestClassifier(n_estimators=50, max_depth=5)
     rf = RandomForestRegressor(n_estimators=50, max_depth=5)
     rf.fit(X_train, y_train)
+ 
 
-    exp = Tree(model = rf, X = X_test, model_type = 'Random_Forest', task_type = 'regression')
-    #print(exp.produce_global())
+    ##XGBOOST
+    
+    #xgtrain = xgboost.DMatrix(X_train.values, y_train.values)
+    #xgtest = xgboost.DMatrix(X_test.values)
+    #param = {'max_depth':2, 'eta':1}
+    #xgb = xgboost.XGBRegressor().fit(X_train, y_train)
+    #(params = param, dtrain = xgtrain)
+    #xgb.fit(X_train,y_train)
+
+    exp = Tree(model = rf, X = X_test, model_type='Random_Forest', task_type = 'regression')
+    print(exp.produce_global())
     #print(X_test.shape[0])
     print(exp.produce_sample(samples = [10, 44]))
     #print(X_test.iloc[[10,44]])
+
+
+
+    #datasets:
+    #SEMI_1217_click_prediction_small
+    #SEMI_1040_sylva_prior
+    #SEMI_1044_eye_movements
+    #196_autoMpg
+    #26_radon_seed

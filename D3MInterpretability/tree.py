@@ -5,16 +5,17 @@ import pandas as pd
 import typing
 
 import shap
-import xgboost
+import xgboost as xgb
 
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.cluster import KMeans
 
 class Tree():
     '''
-        Primitive that takes a dataset and a fitted tree-based model and returns the global explanation
-        for the model predictions on the given dataset, and a function to produce explanations for any 
-        given sample from the explanations.
-
+        Primitive that takes a dataset and a fitted tree-based model and returns explnations. 
+        For global explanations returns a tuple containing the datatset that explanations were made on, and the global explanations
+        For sample explnations, returns a list of the explantions for the samples provided
+    
         Parameters
         ----------
         model : model object
@@ -35,7 +36,7 @@ class Tree():
             Is the tree model a regressor or a classifier
     '''
 
-    def __init__(self, model, X, number_of_features = 5, model_type = None, task_type = 'regression')-> None:
+    def __init__(self, model, X, number_of_features = None, model_type = None, task_type = 'regression')-> None:
   
         self.X = X
         self.model = model
@@ -55,38 +56,52 @@ class Tree():
         '''
         
         df = self.X.copy()
-        df['pred_target'] = self.model.predict(self.X).astype(int)
+        df['cluster_assignment'] = KMeans().fit_predict(self.X).astype(int)
 
-        n_classes = df['pred_target'].unique()
+        n_classes = df['cluster_assignment'].unique()
 
         #deal with cases in which the predictions are all one class
         if len(n_classes) ==1:
-            return df.sample(1000).drop(columns = ['pred_target'])
+            return df.sample(sample_length).drop(columns = ['cluster_assignment'])
         
         else:
             proportion = round(sample_length/len(n_classes))
             
             dfs = []
-            full_classes = []
             
             for i in n_classes:
                 #dealing with classes that have less than or equal to their proportional representation
-                if df[df['pred_target']==i].shape[0] <= proportion:
-                    dfs.append(df[df['pred_target']==i])
+                if df[df['cluster_assignment']==i].shape[0] <= proportion:
+                    dfs.append(df[df['cluster_assignment']==i])
                 else:
-                    dfs.append(df[df['pred_target']==i].sample(proportion))
+                    dfs.append(df[df['cluster_assignment']==i].sample(proportion))
 
             sub_sample_df = pd.concat(dfs)
             
-            return sub_sample_df.drop(columns = ['pred_target'])
+            return sub_sample_df.drop(columns = ['cluster_assignment'])
+
+    def _get_top_features(self, shap_values, number_of_features):
+        
+        df = pd.DataFrame(shap_values, columns= self.X.columns)
+        cols = abs(df.mean()).sort_values(ascending=False)[:number_of_features].index
+        sorter = np.argsort(self.X.columns)
+        imp_features = sorter[np.searchsorted(self.X.columns, cols, sorter = sorter)]
+
+        keep = []
+        for row in shap_values:
+            keep.append(row[imp_features])
+        keep_list = [k.tolist() for k in keep]
+
+        return imp_features, keep_list
+
         
 
     
     def produce_sample(self, samples):
 
         '''
-            Regression: Returns the shapley values for the given samples
-            Classification: Random Forest - returns a list of the explanations for the prediction, in the order that the samples are given
+            Returns a dataframe of the shapley values for the given samples
+            
         '''
         
         ##restrict features to most important
@@ -95,49 +110,43 @@ class Tree():
         
        
         if (self.task_type == 'classification') & (self.model_type == 'Random_Forest'):
-
-            values_list = []
-            for idx, val in enumerate(samples):
-                a = list(self.model.predict_proba(self.X.iloc[[val]]))
-                pred_value = a.index(max(a))
-                values_list.append(shap_values[pred_value][idx])
-                                   
-            return values_list
+            
+            probs = self.explainer.expected_value
+            idx = probs.index(max(probs))
+                                
+            return pd.DataFrame(shap_values[idx], columns = self.X.columns, index = self.X.iloc[samples].index)
         
         else: 
-            return shap_values
+            return pd.DataFrame(shap_values, columns = self.X.columns, index = self.X.iloc[samples].index)
     
     
     def produce_global(self):
         """
-            Returns global explanation (shapley values)
+            Returns a dataframe of the shap values for each feature, this will be a downsampled dataframe for large datasets 
         """ 
         
-        # handle large random forest regressor
-        if (self.task_type == 'regression') & (self.model_type == 'Random_Forest') & (self.X.shape[0] > 1500):
-            sub_sample = self._get_data_sample(sample_length = 1500)
-            shap_values = self.explainer.shap_values(sub_sample)
-                    
-        # handle random forest classifier
+        if (self.model_type == 'Random_Forest') & (self.X.shape[0] > 1500):
+            df = self._get_data_sample(sample_length = 1500)
+            shap_values = self.explainer.shap_values(df)
+            df.sort_index(inplace = True)
+
+        else:
+            df = self.X
+            shap_values = self.explainer.shap_values(df)
+
+
         if (self.task_type == 'classification') & (self.model_type == 'Random_Forest'):
-            if self.X.shape[0] > 1500:
-            
-                sub_sample = self._get_data_sample(sample_length = 1500)
-                if self.task_type == 'regression':
-                    shap_values = self.explainer.shap_vales(sub_sample)
-                else:
-                    shap_values = []
-                    for index, row in sub_sample.iterrows():
-                        pp = list(self.model.predict_proba([row]))
-                        pred_value = pp.index(max(pp))
-                        shap_values.append(self.explainer.shap_values(row)[pred_value])
 
-        # handle small random forest regressor and other tree models
-        else:            
-            shap_values = self.explainer.shap_values(self.X)
-
+            probs = self.explainer.expected_value
+            idx = probs.index(max(probs))
+                
+            shap_values = shap_values[idx]
         
-        return shap_values
+       #if self.number_of_features:
+         #   features, shap_values = self._get_top_features(shap_values, self.number_of_features)
+          #  return (sub_sample.iloc[:,features], shap_values)    
+        
+        return (pd.DataFrame(shap_values, columns = df.columns, index = df.index))
 
 if __name__ == '__main__':
 
@@ -156,25 +165,28 @@ if __name__ == '__main__':
     y_train = train[target]
     X_test = test.drop(columns = ['d3mIndex',target])
 
-    rf = RandomForestClassifier(n_estimators=50, max_depth=5)
+    #rf = RandomForestClassifier(n_estimators=50, max_depth=5)
     #rf = RandomForestRegressor(n_estimators=50, max_depth=5)
-    rf.fit(X_train, y_train)
+    #rf.fit(X_train, y_train)
  
 
     ##XGBOOST
     
-    #xgtrain = xgboost.DMatrix(X_train.values, y_train.values)
-    #xgtest = xgboost.DMatrix(X_test.values)
-    #param = {'max_depth':2, 'eta':1}
+    xgtrain = xgb.DMatrix(X_train.values, y_train.values)
+    xgtest = xgb.DMatrix(X_test.values)
+    param = {'max_depth':2, 'eta':1}
     #xgb = xgboost.XGBRegressor().fit(X_train, y_train)
-    #(params = param, dtrain = xgtrain)
-    #xgb.fit(X_train,y_train)
+    model = xgb.train(params = param, dtrain = xgtrain)
+    #model = xgb.fit(X_train,y_train)
 
-    exp = Tree(model = rf, X = X_test, model_type='Random_Forest', task_type = 'classification')
+    exp = Tree(model = model, X = X_test, task_type = 'classification')
     print(exp.produce_global())
+    print(exp.produce_sample([12]))
     #print(X_test.shape[0])
-    print(exp.produce_sample(samples = [10, 44]))
+    #print(exp.produce_sample(samples = [10, 44]))
+    #shap.summary_plot(exp.produce_global()[1][0], exp.produce_global()[0])
     #print(X_test.iloc[[10,44]])
+    #print(shap.kmeans(X_test,10))
 
 
 

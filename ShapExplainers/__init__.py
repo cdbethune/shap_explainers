@@ -1,4 +1,4 @@
-from D3MInterpretability.tree import Tree
+from ShapExplainers.tree import Tree
 
 __version__ = '1.0.0'
 
